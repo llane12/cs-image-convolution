@@ -3,59 +3,135 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 
 // https://blog.demofox.org/2022/02/26/image-sharpening-convolution-kernels/
 // https://en.wikipedia.org/wiki/Kernel_(image_processing)
 // https://stackoverflow.com/questions/37095783/how-is-a-convolution-calculated-on-an-image-with-three-rgb-channels
 // Image source https://www.nist.gov/image/03ts001peanutbsrmcsjpg
+// Image source https://www.researchgate.net/profile/Shashikant-Ilager/publication/327134322/figure/fig5/AS:661945946492938@1534831620212/Edge-Detection-Sample-Input-and-Output-Images.png
 
 namespace ImageConvolution
 {
-    struct Kernel(string name, double[,] matrix, bool grayscale = false, bool blur = false)
+    struct Filter
     {
-        public string Name { get; set; } = name;
-        public double[,] Matrix { get; set; } = matrix;
-        public bool Grayscale { get; set; } = grayscale;
-        public bool Blur { get; set; } = blur;
+        public string Name { get; set; }
+        public double[,] Kernel { get; set; }
+        public double Factor { get; set; }
+        public int Bias { get; set; }
+        public bool Grayscale { get; set; }
+        public string BlurFilter { get; set; }
+
+        public Filter(string name, double[,] kernel, double factor = 1.0, int bias = 0, bool grayscale = false, string blurFilter = null)
+        {
+            Name = name;
+            Kernel = kernel;
+            Factor = factor;
+            Bias = bias;
+            Grayscale = grayscale;
+            BlurFilter = blurFilter;
+        }
     }
 
     class Program
     {
-        private static readonly List<Kernel> kernels =
+        private static readonly List<Filter> kernels =
         [
-            new("Sharpen", new double[,] {
-                { 0, -1, 0 },
-                { -1, 5, -1 },
-                { 0, -1, 0 } }),
-            new("Box_blur", new double[,] {
-                { 0.1111, 0.1111, 0.1111 },
-                { 0.1111, 0.1111, 0.1111 },
-                { 0.1111, 0.1111, 0.1111 } }),
-            new("Gaussian_blur_3_3", new double[,] {
-                { 0.0625, 0.125, 0.0625 },
-                { 0.125,   0.25, 0.125 },
-                { 0.0625, 0.125, 0.0625 } }),
-            new("Unsharp_masking_box_blur", new double[,] {
-                { -0.1111, -0.1111, -0.1111 },
-                { -0.1111,  1.8888, -0.1111 },
-                { -0.1111, -0.1111, -0.1111 } }),
-            new("Unsharp_masking_gaussian_blur", new double[,] {
+            new("Sharpen3x3", new double[,] {
+                {  0, -1,  0 },
+                { -1,  5, -1 },
+                {  0, -1,  0 } }),
+            new("Sharpen5x5", new double[,] {
+                {  0,  0, -1,  0,  0 },
+                {  0, -1, -1, -1,  0 },
+                { -1, -1, 13, -1, -1 },
+                {  0, -1, -1, -1,  0 },
+                {  0,  0, -1,  0,  0 } }),
+            new("BoxBlur3x3", new double[,] {
+                { 1, 1, 1 },
+                { 1, 1, 1 },
+                { 1, 1, 1 } },
+                factor: 1.0 / 9.0),
+            new("BoxBlur9x9", new double[,] {
+                { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+                { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+                { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+                { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+                { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+                { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+                { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+                { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+                { 1, 1, 1, 1, 1, 1, 1, 1, 1 } },
+                factor: 1.0 / 81.0),
+            new("GaussianBlur3x3", new double[,] {
+                { 1, 2, 1 },
+                { 2, 4, 2 },
+                { 1, 2, 1 } },
+                factor: 1.0 / 16.0),
+            new("GaussianBlur5x5", new double[,] {
+                { 2,  4,  5,  4,  2 },
+                { 4,  9, 12,  9,  4 },
+                { 5, 12, 15, 12,  5 },
+                { 4,  9, 12,  9,  4 },
+                { 2,  4,  5,  4,  2 } },
+                factor: 1.0 / 159.0),
+            new("UnsharpMasking_BoxBlur3x3", new double[,] {
+                { -1, -1, -1 },
+                { -1, 17, -1 },
+                { -1, -1, -1 } },
+                factor: 1.0 / 9.0),
+            new("UnsharpMasking_GaussianBlur3x3", new double[,] {
                 { -0.0023, -0.0432, -0.0023 },
                 { -0.0432,   1.182, -0.0432 },
                 { -0.0023, -0.0432, -0.0023 } }),
-            new("Laplacian_1", new double[,] {
+            new("Laplacian3x3_Grayscale", new double[,] {
                 {  0, -1,  0 },
                 { -1,  4, -1 },
-                {  0, -1,  0 } }, grayscale: true, blur: false),
-            new("Laplacian_2", new double[,] {
+                {  0, -1,  0 } },
+                grayscale: true),
+            new("Laplacian3x3_Type2_Grayscale", new double[,] {
                 { -1, -1, -1 },
                 { -1,  8, -1 },
-                { -1, -1, -1 } }, grayscale: true, blur: false),
+                { -1, -1, -1 } },
+                grayscale: true),
+            new("Laplacian5x5", new double[,] {
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, 24, -1, -1, },
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, -1, -1, -1  } },
+                grayscale: false),
+            new("Laplacian5x5_GaussianBlur3x3", new double[,] {
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, 24, -1, -1, },
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, -1, -1, -1  } },
+                grayscale: false, blurFilter: "GaussianBlur3x3"),
+            new("Laplacian5x5_Grayscale", new double[,] {
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, 24, -1, -1, },
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, -1, -1, -1  } },
+                grayscale: true),
+            new("Laplacian5x5_GaussianBlur3x3_Grayscale", new double[,] {
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, 24, -1, -1, },
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, -1, -1, -1  } },
+                grayscale: true, blurFilter: "GaussianBlur3x3"),
+            new("Laplacian5x5_GaussianBlur5x5_Grayscale", new double[,] {
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, 24, -1, -1, },
+                { -1, -1, -1, -1, -1, },
+                { -1, -1, -1, -1, -1  } },
+                grayscale: true, blurFilter: "GaussianBlur5x5"),
         ];
 
-        private static readonly PixelFormat pixelFormat = PixelFormat.Format24bppRgb;
-        private static readonly int bytesPerPixel = 3;
+        private static readonly PixelFormat pixelFormat = PixelFormat.Format32bppArgb;
+        private static readonly int bytesPerPixel = 4;
 
         public static void Main()
         {
@@ -67,7 +143,7 @@ namespace ImageConvolution
                 File.Delete(file);
             }
 
-            string path = "0_input.jpg";
+            string path = "0_input.png";
             int fileCount = 1;
 
             using StreamReader streamReader = new(path);
@@ -84,50 +160,64 @@ namespace ImageConvolution
 
             foreach (var kernel in kernels)
             {
-                Console.WriteLine($"Applying {kernel.Name}...");
+                string message = $"Applying {kernel.Name}";
+                if (kernel.Grayscale)
+                {
+                    message += " + Grayscale";
+                }
+                if (!string.IsNullOrEmpty(kernel.BlurFilter))
+                {
+                    message += $" + Blur filter: {kernel.BlurFilter}";
+                }
+                Console.WriteLine($"{message}...");
 
                 if (kernel.Grayscale)
                 {
                     ConvertToGrayscale(ref imageBytes, bytesPerPixel);
-                    SaveImage(imageBytes, bmp.Width, bmp.Height, pixelFormat, "1_grayscale", fileCount);
+                    //SaveImage(imageBytes, bmp.Width, bmp.Height, pixelFormat, "1_grayscale", fileCount);
                 }
 
-                if (kernel.Blur)
+                if (!string.IsNullOrEmpty(kernel.BlurFilter))
                 {
-                    Kernel blurKernel = kernels.Find(x => x.Name == "Gaussian_blur_3_3");
+                    Filter blurKernel = kernels.Find(x => x.Name == kernel.BlurFilter);
                     Convolve(imageBytes, blurKernel, imageBytes, bmp.Width, bmp.Height, bytesPerPixel, stride);
-                    SaveImage(imageBytes, bmp.Width, bmp.Height, pixelFormat, "2_blur", fileCount);
+                    //SaveImage(imageBytes, bmp.Width, bmp.Height, pixelFormat, "2_blur", fileCount);
                 }
 
                 Convolve(imageBytes, kernel, output, bmp.Width, bmp.Height, bytesPerPixel, stride);
 
                 SaveImage(output, bmp.Width, bmp.Height, pixelFormat, kernel.Name, fileCount++);
+                Console.WriteLine();
             }
         }
 
-        public static void Convolve(byte[] imageBytes, Kernel kernel, byte[] output, int width, int height, int bytesPerPixel, int stride)
+        public static void Convolve(byte[] imageBytes, Filter filter, byte[] output, int width, int height, int bytesPerPixel, int stride)
         {
-            for (int x = 0; x < height; x++)
+            int filterHeight = filter.Kernel.GetLength(0);
+            int filterWidth = filter.Kernel.GetLength(1);
+            int filterOffset = (filterWidth - 1) / 2;
+
+            for (int y = 0; y < height; y++)
             {
-                for (int y = 0; y < width; y++)
+                for (int x = 0; x < width; x++)
                 {
                     double b = 0.0;
                     double g = 0.0;
                     double r = 0.0;
 
-                    for (int f_y = 0; f_y < kernel.Matrix.GetLength(0); f_y++)
+                    for (int f_y = 0; f_y < filterHeight; f_y++)
                     {
-                        for (int f_x = 0; f_x < kernel.Matrix.GetLength(1); f_x++)
+                        for (int f_x = 0; f_x < filterWidth; f_x++)
                         {
-                            int row = x + (f_y - 1);
-                            int col = y + (f_x - 1);
+                            int row = y + (f_y - filterOffset);
+                            int col = x + (f_x - filterOffset);
 
                             // Edge handling: Extend
                             row = Math.Min(Math.Max(row, 0), height - 1);
                             col = Math.Min(Math.Max(col, 0), width - 1);
 
                             int calcOffset = (row * stride) + (col * bytesPerPixel);
-                            double filterValue = kernel.Matrix[f_y, f_x];
+                            double filterValue = filter.Kernel[f_y, f_x];
 
                             b += imageBytes[calcOffset] * filterValue;
                             g += imageBytes[calcOffset + 1] * filterValue;
@@ -135,11 +225,15 @@ namespace ImageConvolution
                         }
                     }
 
+                    b = (filter.Factor * b) + filter.Bias;
+                    g = (filter.Factor * g) + filter.Bias;
+                    r = (filter.Factor * r) + filter.Bias;
+
                     b = Math.Min(255, Math.Max(0, b));
                     g = Math.Min(255, Math.Max(0, g));
                     r = Math.Min(255, Math.Max(0, r));
 
-                    int sourceOffset = (x * stride) + (y * bytesPerPixel);
+                    int sourceOffset = (y * stride) + (x * bytesPerPixel);
 
                     output[sourceOffset] = (byte)b;
                     output[sourceOffset + 1] = (byte)g;

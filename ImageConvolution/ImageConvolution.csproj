@@ -15,6 +15,9 @@
 
   <ItemGroup>
     <None Update="0_input.jpg">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </None>
+    <None Update="0_input.png">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="small.jpg">
