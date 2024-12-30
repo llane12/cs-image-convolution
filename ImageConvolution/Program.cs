@@ -15,16 +15,18 @@ namespace ImageConvolution
     struct Filter
     {
         public string Name { get; set; }
-        public double[,] Kernel { get; set; }
+        public double[,] KernelHorizontal { get; set; }
+        public double[,] KernelVertical { get; set; }
         public double Factor { get; set; }
         public int Bias { get; set; }
         public bool Grayscale { get; set; }
         public string BlurFilter { get; set; }
 
-        public Filter(string name, double[,] kernel, double factor = 1.0, int bias = 0, bool grayscale = false, string blurFilter = null)
+        public Filter(string name, double[,] kernel, double[,] kernelVertical = null, double factor = 1.0, int bias = 0, bool grayscale = false, string blurFilter = null)
         {
             Name = name;
-            Kernel = kernel;
+            KernelHorizontal = kernel;
+            KernelVertical = kernelVertical;
             Factor = factor;
             Bias = bias;
             Grayscale = grayscale;
@@ -128,6 +130,60 @@ namespace ImageConvolution
                 { -1, -1, -1, -1, -1, },
                 { -1, -1, -1, -1, -1  } },
                 grayscale: true, blurFilter: "GaussianBlur5x5"),
+            new("Sobel3x3_Grayscale", new double[,]  {
+                { -1, 0, 1, },
+                { -2, 0, 2, },
+                { -1, 0, 1, } },
+                kernelVertical: new double[,] {
+                    {  1,  2,  1, },
+                    {  0,  0,  0, },
+                    { -1, -2, -1, } },
+                grayscale: true),
+            new("Sobel3x3", new double[,] {
+                { -1, 0, 1, },
+                { -2, 0, 2, },
+                { -1, 0, 1, } },
+                kernelVertical: new double[,] {
+                    {  1,  2,  1, },
+                    {  0,  0,  0, },
+                    { -1, -2, -1, } },
+                grayscale: false),
+            new("Prewitt3x3_Grayscale", new double[,]  {
+                { -1, 0, 1, },
+                { -1, 0, 1, },
+                { -1, 0, 1, } },
+                kernelVertical: new double[,] {
+                    {  1,  1,  1, },
+                    {  0,  0,  0, },
+                    { -1, -1, -1, } },
+                grayscale: true),
+            new("Prewitt3x3", new double[,]  {
+                { -1, 0, 1, },
+                { -1, 0, 1, },
+                { -1, 0, 1, } },
+                kernelVertical: new double[,] {
+                    {  1,  1,  1, },
+                    {  0,  0,  0, },
+                    { -1, -1, -1, } },
+                grayscale: false),
+            new("Kirsch3x3_Grayscale", new double[,]  {
+                {  5,   5,   5, },
+                { -3,   0,  -3, },
+                { -3,  -3,  -3, } },
+                kernelVertical: new double[,] {
+                    { 5, -3, -3, },
+                    { 5,  0, -3, },
+                    { 5, -3, -3, } },
+                grayscale: true),
+            new("Kirsch3x3", new double[,]  {
+                {  5,   5,   5, },
+                { -3,   0,  -3, },
+                { -3,  -3,  -3, } },
+                kernelVertical: new double[,] {
+                    { 5, -3, -3, },
+                    { 5,  0, -3, },
+                    { 5, -3, -3, } },
+                grayscale: false),
         ];
 
         private static readonly PixelFormat pixelFormat = PixelFormat.Format32bppArgb;
@@ -143,7 +199,7 @@ namespace ImageConvolution
                 File.Delete(file);
             }
 
-            string path = "0_input.png";
+            string path = "0_input.jpg";
             int fileCount = 1;
 
             using StreamReader streamReader = new(path);
@@ -154,12 +210,12 @@ namespace ImageConvolution
             Console.WriteLine();
 
             byte[] imageBytes = BitmapToByteArray(bmp, pixelFormat, bytesPerPixel);
-            byte[] output = new byte[imageBytes.Length];
-
-            int stride = bmp.Width * bytesPerPixel;
 
             foreach (var kernel in kernels)
             {
+                byte[] input = new byte[imageBytes.Length];
+                Array.Copy(imageBytes, 0, input, 0, imageBytes.Length);
+
                 string message = $"Applying {kernel.Name}";
                 if (kernel.Grayscale)
                 {
@@ -173,37 +229,46 @@ namespace ImageConvolution
 
                 if (kernel.Grayscale)
                 {
-                    ConvertToGrayscale(ref imageBytes, bytesPerPixel);
-                    //SaveImage(imageBytes, bmp.Width, bmp.Height, pixelFormat, "1_grayscale", fileCount);
+                    ConvertToGrayscale(ref input, bytesPerPixel);
+                    //SaveImage(input, bmp.Width, bmp.Height, pixelFormat, "1_grayscale", fileCount);
                 }
 
                 if (!string.IsNullOrEmpty(kernel.BlurFilter))
                 {
                     Filter blurKernel = kernels.Find(x => x.Name == kernel.BlurFilter);
-                    Convolve(imageBytes, blurKernel, imageBytes, bmp.Width, bmp.Height, bytesPerPixel, stride);
-                    //SaveImage(imageBytes, bmp.Width, bmp.Height, pixelFormat, "2_blur", fileCount);
+                    input = Convolve(input, blurKernel, bmp.Width, bmp.Height, bytesPerPixel);
+                    //SaveImage(input, bmp.Width, bmp.Height, pixelFormat, "2_blur", fileCount);
                 }
 
-                Convolve(imageBytes, kernel, output, bmp.Width, bmp.Height, bytesPerPixel, stride);
+                byte[] output = Convolve(input, kernel, bmp.Width, bmp.Height, bytesPerPixel);
 
                 SaveImage(output, bmp.Width, bmp.Height, pixelFormat, kernel.Name, fileCount++);
                 Console.WriteLine();
             }
         }
 
-        public static void Convolve(byte[] imageBytes, Filter filter, byte[] output, int width, int height, int bytesPerPixel, int stride)
+        public static byte[] Convolve(
+            byte[] imageBytes,
+            Filter filter,
+            int width,
+            int height,
+            int bytesPerPixel)
         {
-            int filterHeight = filter.Kernel.GetLength(0);
-            int filterWidth = filter.Kernel.GetLength(1);
+            byte[] output = new byte[imageBytes.Length];
+            int stride = width * bytesPerPixel;
+
+            int filterHeight = filter.KernelHorizontal.GetLength(0);
+            int filterWidth = filter.KernelHorizontal.GetLength(1);
             int filterOffset = (filterWidth - 1) / 2;
 
             for (int y = 0; y < height; y++)
             {
                 for (int x = 0; x < width; x++)
                 {
-                    double b = 0.0;
-                    double g = 0.0;
-                    double r = 0.0;
+                    double bx, gx, rx;
+                    double by, gy, ry;
+                    double btotal, gtotal, rtotal;
+                    bx = gx = rx = by = gy = ry = 0;
 
                     for (int f_y = 0; f_y < filterHeight; f_y++)
                     {
@@ -217,33 +282,57 @@ namespace ImageConvolution
                             col = Math.Min(Math.Max(col, 0), width - 1);
 
                             int calcOffset = (row * stride) + (col * bytesPerPixel);
-                            double filterValue = filter.Kernel[f_y, f_x];
 
-                            b += imageBytes[calcOffset] * filterValue;
-                            g += imageBytes[calcOffset + 1] * filterValue;
-                            r += imageBytes[calcOffset + 2] * filterValue;
+                            double fvx = filter.KernelHorizontal[f_y, f_x];
+                            bx += imageBytes[calcOffset] * fvx;
+                            gx += imageBytes[calcOffset + 1] * fvx;
+                            rx += imageBytes[calcOffset + 2] * fvx;
+
+                            if (filter.KernelVertical != null)
+                            {
+                                double fvy = filter.KernelVertical[f_y, f_x];
+                                by += imageBytes[calcOffset] * fvy;
+                                gy += imageBytes[calcOffset + 1] * fvy;
+                                ry += imageBytes[calcOffset + 2] * fvy;
+                            }
                         }
                     }
 
-                    b = (filter.Factor * b) + filter.Bias;
-                    g = (filter.Factor * g) + filter.Bias;
-                    r = (filter.Factor * r) + filter.Bias;
+                    bx = (filter.Factor * bx) + filter.Bias;
+                    gx = (filter.Factor * gx) + filter.Bias;
+                    rx = (filter.Factor * rx) + filter.Bias;
 
-                    b = Math.Min(255, Math.Max(0, b));
-                    g = Math.Min(255, Math.Max(0, g));
-                    r = Math.Min(255, Math.Max(0, r));
+                    if (filter.KernelVertical != null)
+                    {
+                        by = (filter.Factor * by) + filter.Bias;
+                        gy = (filter.Factor * gy) + filter.Bias;
+                        ry = (filter.Factor * ry) + filter.Bias;
+
+                        btotal = Math.Sqrt((bx * bx) + (by * by));
+                        gtotal = Math.Sqrt((gx * gx) + (gy * gy));
+                        rtotal = Math.Sqrt((rx * rx) + (ry * ry));
+                    }
+                    else
+                    {
+                        btotal = bx;
+                        gtotal = gx;
+                        rtotal = rx;
+                    }
+
+                    btotal = Math.Min(255, Math.Max(0, btotal));
+                    gtotal = Math.Min(255, Math.Max(0, gtotal));
+                    rtotal = Math.Min(255, Math.Max(0, rtotal));
 
                     int sourceOffset = (y * stride) + (x * bytesPerPixel);
 
-                    output[sourceOffset] = (byte)b;
-                    output[sourceOffset + 1] = (byte)g;
-                    output[sourceOffset + 2] = (byte)r;
-                    if (bytesPerPixel == 4)
-                    {
-                        output[sourceOffset + 3] = 255;
-                    }
+                    output[sourceOffset] = (byte)btotal;
+                    output[sourceOffset + 1] = (byte)gtotal;
+                    output[sourceOffset + 2] = (byte)rtotal;
+                    output[sourceOffset + 3] = 255;
                 }
             }
+
+            return output;
         }
 
         private static byte[] BitmapToByteArray(Bitmap bmp, PixelFormat pixelFormat, int bytesPerPixel)
